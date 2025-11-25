@@ -127,3 +127,27 @@ Task B (JSON Extraction):
 - Input: "We require 50 units of printer ink cartridges."
   - Target: `{"item": "printer ink cartridges", "quantity": 50}`
   - Pred: `{ "item": "printer cartridges", "quantity": 50}` ✅ (valid JSON, minor item name shortening)
+
+---
+
+## User Analysis
+
+The following analysis sections are taken directly from the code comments in `kp3113_question_1.py` and `kp3113_question_2.py`. These represent my own analysis and interpretation of the results.
+
+### Problem 1: Analysis
+
+Basically what I found is that Temperature=1.0 gave the highest diversity - around 0.61 distinct-1 with the base prompt and 0.76 with the schema prompt. Logically this makes sense because higher temperature flattens the probability distribution, so the model becomes more willing to pick less likely tokens instead of always going for the safe choice. Greedy decoding had the lowest diversity (0.25 distinct-1) since it deterministically picks the most probable token every time.
+
+The interesting part was JSON validity. With the base prompt, I got 0% JSON validity across all configurations - the model just rambled on without producing any valid JSON. When I added the schema prompt that explicitly says "Output must be valid JSON exactly: {...}", only Temperature=1.0 managed to produce valid JSON (10% validity). The other configurations still got 0%.
+
+The main issue here is that distilgpt2 was not trained to follow instructions. It's just a causal language model that predicts the next token based on what it's seen before. So even when I tell it "output valid JSON", it doesn't really understand that as a command. The only reason Temperature=1.0 worked at all is because the high randomness let it occasionally stumble onto a valid JSON structure by chance.
+
+If I wanted to actually get reliable JSON output, I'd need to either use constrained decoding (like the outlines library) to force the model to only generate valid JSON tokens, or switch to an instruction-tuned model like Flan-T5 that was actually trained to follow format instructions.
+
+### Problem 2: Analysis
+
+Basically what happened with Task A (Sentiment) is that before fine-tuning, the model was getting around 43% accuracy which is not great for a 5-class problem. Looking at the examples, it was confusing similar classes - predicting "negative" instead of "very_negative", or "positive" instead of "very_positive". After SFT, accuracy jumped to about 87%. The model learned to distinguish between the intensity levels properly. Logically this makes sense because instruction tuning teaches the model the exact output format I expect.
+
+For Task B (JSON Extraction), the situation was more interesting. Before SFT, I got 0% JSON validity - the model just output plain text like "15 whiteboard erasers" instead of proper JSON. After training, I hit 100% JSON validity. Field match is around 77% - the model sometimes shortens item names (like "printer cartridges" instead of "printer ink cartridges") but the structure is always correct.
+
+The main blocker I ran into was that FLAN-T5's tokenizer maps curly braces {} to <unk> tokens, which then get stripped during decoding. So the model literally could not output braces no matter how much I trained it. The trick was to add them as regular tokens using `tokenizer.add_tokens(["{", "}"])` and then resize the model embeddings. Once I did that, JSON validity went from 0% to 100% immediately. This taught me that SFT is really about format alignment - the pretrained model already understands the concepts, it just needs to learn the exact output format. And always check if special characters are in your tokenizer's vocabulary first.
